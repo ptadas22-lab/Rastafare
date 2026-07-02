@@ -297,6 +297,7 @@ export default function App() {
             selectedSaleId={selectedSaleId}
             onUpdateSale={handleUpdateSale}
             onSelectSale={(id) => setSelectedSaleId(id)}
+            onNavigate={(screen) => setActiveScreen(screen)}
           />
         );
       case 'payments':

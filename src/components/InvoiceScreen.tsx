@@ -36,6 +36,7 @@ interface InvoiceScreenProps {
   selectedSaleId?: string;
   onUpdateSale: (sale: SalesEntry) => void;
   onSelectSale: (id: string) => void;
+  onNavigate: (screen: string) => void;
 }
 
 export default function InvoiceScreen({
@@ -44,12 +45,20 @@ export default function InvoiceScreen({
   companyProfile,
   selectedSaleId,
   onUpdateSale,
-  onSelectSale
+  onSelectSale,
+  onNavigate
 }: InvoiceScreenProps) {
   
   // Active sale index / selection
   const activeSale = sales.find(s => s.id === selectedSaleId) || sales[0];
   
+  // Summary calculations
+  const totalInvoices = sales.length;
+  const paidInvoices = sales.filter(s => s.paymentStatus === 'Paid').length;
+  const pendingInvoices = sales.filter(s => s.paymentStatus === 'Pending' || s.paymentStatus === 'Partial').length;
+  const totalInvoiceValue = sales.reduce((sum, s) => sum + s.totalSales, 0);
+  const totalGstCollected = sales.reduce((sum, s) => sum + (s.gstAmount || 0), 0);
+
   // Interactive UI states
   const [invoiceNotes, setInvoiceNotes] = useState("Thank you for choosing Rastafari Wellness. This is a computer-generated GST tax invoice and does not require a physical signature unless specified.");
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -57,15 +66,13 @@ export default function InvoiceScreen({
   const [statusFilter, setStatusFilter] = useState('All');
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
 
-  // Auto-generate invoice number in sequence for active selection if missing
+  // Auto-generate invoice number in sequence for all sales missing it
   useEffect(() => {
-    if (activeSale && !activeSale.invoiceNo) {
-      const saleYear = activeSale.date ? activeSale.date.split('-')[0] : '2026';
-      
-      // Calculate max sequence for this year across ALL existing sales
+    const missingInvoices = sales.filter(s => !s.invoiceNo);
+    if (missingInvoices.length > 0) {
       let maxSeq = 0;
       sales.forEach(s => {
-        if (s.invoiceNo && s.invoiceNo.startsWith(`INV-${saleYear}-`)) {
+        if (s.invoiceNo) {
           const parts = s.invoiceNo.split('-');
           const seqNum = parseInt(parts[2], 10);
           if (!isNaN(seqNum) && seqNum > maxSeq) {
@@ -73,18 +80,18 @@ export default function InvoiceScreen({
           }
         }
       });
-
-      const nextSeq = maxSeq + 1;
-      const seqStr = String(nextSeq).padStart(4, '0');
-      const generatedInvoiceNo = `INV-${saleYear}-${seqStr}`;
-
-      // Safely update sales database without causing infinite loop
-      onUpdateSale({
-        ...activeSale,
-        invoiceNo: generatedInvoiceNo
+      
+      missingInvoices.forEach((s, idx) => {
+        const saleYear = s.date ? s.date.split('-')[0] : '2026';
+        const nextSeq = maxSeq + 1 + idx;
+        const seqStr = String(nextSeq).padStart(4, '0');
+        onUpdateSale({
+          ...s,
+          invoiceNo: `INV-${saleYear}-${seqStr}`
+        });
       });
     }
-  }, [activeSale?.id, sales.length]); // Triggers when selection changes or new sales added
+  }, [sales.length]); // Triggers when new sales are added
 
   // Manual generation trigger as backup
   const handleForceGenerateNo = (sale: SalesEntry) => {
@@ -291,6 +298,33 @@ export default function InvoiceScreen({
           <p className="text-xs text-slate-500 mt-1">
             Access, compile, and download vector-crisp GST compliance invoices. Uses your business state <strong>{businessState}</strong> to automatically route taxes.
           </p>
+          <p className="text-[10px] text-indigo-600 font-semibold mt-1">
+            Note: Invoices are generated only from real outward sales records.
+          </p>
+        </div>
+      </div>
+
+      {/* Summary Cards */}
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-4 print:hidden">
+        <div className="bg-white border border-slate-200 p-4 rounded-xl shadow-xs">
+          <div className="text-[10px] uppercase font-bold text-slate-500 tracking-wider">Total Invoices</div>
+          <div className="text-xl font-display font-bold text-slate-900 mt-1">{totalInvoices}</div>
+        </div>
+        <div className="bg-white border border-slate-200 p-4 rounded-xl shadow-xs">
+          <div className="text-[10px] uppercase font-bold text-slate-500 tracking-wider">Paid Invoices</div>
+          <div className="text-xl font-display font-bold text-emerald-600 mt-1">{paidInvoices}</div>
+        </div>
+        <div className="bg-white border border-slate-200 p-4 rounded-xl shadow-xs">
+          <div className="text-[10px] uppercase font-bold text-slate-500 tracking-wider">Pending Invoices</div>
+          <div className="text-xl font-display font-bold text-amber-600 mt-1">{pendingInvoices}</div>
+        </div>
+        <div className="bg-white border border-slate-200 p-4 rounded-xl shadow-xs">
+          <div className="text-[10px] uppercase font-bold text-slate-500 tracking-wider">Total Value</div>
+          <div className="text-lg font-mono font-bold text-slate-900 mt-1">{formatINR(totalInvoiceValue)}</div>
+        </div>
+        <div className="bg-white border border-slate-200 p-4 rounded-xl shadow-xs">
+          <div className="text-[10px] uppercase font-bold text-slate-500 tracking-wider">GST Collected</div>
+          <div className="text-lg font-mono font-bold text-indigo-600 mt-1">{formatINR(totalGstCollected)}</div>
         </div>
       </div>
 
@@ -319,8 +353,8 @@ export default function InvoiceScreen({
                   className="w-full pl-8 pr-3 py-2 border border-slate-200 rounded-lg text-xs bg-white focus:outline-none focus:border-indigo-500"
                 />
               </div>
-              <div className="flex gap-1.5">
-                {['All', 'Paid', 'Pending'].map((status) => (
+              <div className="flex flex-wrap gap-1.5">
+                {['All', 'Paid', 'Pending', 'Partial', 'Refunded'].map((status) => (
                   <button
                     key={status}
                     onClick={() => setStatusFilter(status)}
@@ -371,7 +405,10 @@ export default function InvoiceScreen({
                     
                     <div className="flex justify-between items-center text-[10px] text-slate-400 mt-2 font-mono">
                       <span>{s.date}</span>
-                      <span className="font-bold text-slate-800">{formatINR(s.totalSales)}</span>
+                      <div className="text-right">
+                        <span className="font-bold text-slate-800">{formatINR(s.totalSales)}</span>
+                        <div className="text-[9px] text-indigo-500 font-semibold">GST: {formatINR(s.gstAmount)}</div>
+                      </div>
                     </div>
 
                     <div className="mt-2.5 flex items-center justify-between border-t border-slate-100 pt-2 text-[9px]">
@@ -733,9 +770,23 @@ export default function InvoiceScreen({
             <div className="bg-white border border-slate-200 p-16 text-center rounded-2xl text-slate-400 max-w-xl mx-auto shadow-xs">
               <AlertCircle className="w-10 h-10 mx-auto mb-3 text-indigo-500 animate-pulse" />
               <p className="text-sm font-bold text-slate-800">No Sales Records Exist</p>
-              <p className="text-xs text-slate-400 mt-2 leading-relaxed">
-                The Invoice Generator is fully automated and only compiles real transactions. Please navigate to the <strong>Purchases & Expenses</strong> or <strong>Outward Sales Logs</strong> to add a sale, and it will immediately generate here.
+              <p className="text-xs text-slate-400 mt-2 mb-6 leading-relaxed">
+                No sales records found. Add an outward sale or import sales to generate invoices automatically.
               </p>
+              <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
+                <button
+                  onClick={() => onNavigate('sales')}
+                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold rounded-lg shadow-sm transition-colors cursor-pointer"
+                >
+                  Add Outward Sale
+                </button>
+                <button
+                  onClick={() => onNavigate('sales')}
+                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold rounded-lg shadow-sm transition-colors cursor-pointer"
+                >
+                  Import Sales Excel
+                </button>
+              </div>
             </div>
           )}
         </div>
