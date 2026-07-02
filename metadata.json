@@ -1,0 +1,6 @@
+{
+  "name": "Finance Control",
+  "description": "Internal accounting automation app for wellness ecommerce businesses to manage sales, stock, invoices, GST compliance, payments, expenses, and generate daily and monthly financial reports.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
