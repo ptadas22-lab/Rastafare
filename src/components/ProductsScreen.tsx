@@ -7,6 +7,7 @@ import React, { useState } from 'react';
 import { Product, SalesEntry, ExpenseRecord } from '../types';
 import { formatINR } from '../utils/format';
 import { Search, AlertCircle, PlusCircle, Check, Trash2, Edit } from 'lucide-react';
+import * as XLSX from 'xlsx';
 
 interface ProductsScreenProps {
   products: Product[];
@@ -46,6 +47,130 @@ export default function ProductsScreen({
   const [formStatus, setFormStatus] = useState<'Active' | 'Inactive'>('Active');
   
   const [formError, setFormError] = useState('');
+
+  // Import states
+  const [importPreviewData, setImportPreviewData] = useState<any[]>([]);
+  const [isImportPreviewOpen, setIsImportPreviewOpen] = useState(false);
+  const [importSuccessMsg, setImportSuccessMsg] = useState('');
+
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      const bstr = evt.target?.result;
+      const wb = XLSX.read(bstr, { type: 'binary' });
+      const wsname = wb.SheetNames[0];
+      const ws = wb.Sheets[wsname];
+      const data = XLSX.utils.sheet_to_json(ws);
+      
+      const parsedData = data.map((row: any, index: number) => {
+        // Map alternate column names
+        const getVal = (keys: string[]) => {
+          for (const key of keys) {
+            if (row[key] !== undefined) return row[key];
+          }
+          return undefined;
+        };
+
+        let pCode = getVal(['Product Code', 'SKU', 'Item Code', 'Product ID']);
+        const pName = getVal(['Product Name', 'Item Name', 'Product', 'Product Title']);
+        const pCategory = getVal(['Category']) || '';
+        const pGst = getVal(['GST Rate', 'Tax', 'Tax %', 'GST %']);
+        const pSelling = getVal(['Selling Price', 'MRP', 'Sale Price', 'Selling Rate']);
+        const pPurchase = getVal(['Purchase Cost', 'Cost Price', 'Purchase Rate', 'Buying Price']);
+        const pOpening = getVal(['Opening Stock', 'Stock', 'Stock Qty', 'Quantity', 'Opening Qty']);
+        const pMin = getVal(['Minimum Stock', 'Reorder Level', 'Min Stock', 'Alert Stock']);
+        const pSupplier = getVal(['Supplier Name', 'Vendor', 'Supplier']);
+        let pStatus = getVal(['Status']);
+
+        let status = 'Ready';
+        
+        // Validations
+        if (!pName) status = 'Missing Product Name';
+        else if (pSelling === undefined || isNaN(Number(pSelling))) status = 'Invalid Price';
+        else if (pPurchase === undefined || isNaN(Number(pPurchase))) status = 'Invalid Price';
+        else if (pOpening === undefined || isNaN(Number(pOpening))) status = 'Invalid Stock';
+        
+        if (!pCode) {
+          pCode = `PRD-${String(products.length + index + 1).padStart(4, '0')}`;
+        } else {
+          // Check if exists
+          if (products.some(p => p.code.toUpperCase() === String(pCode).toUpperCase())) {
+            status = 'Already Exists';
+          }
+        }
+        
+        if (!pStatus) pStatus = 'Active';
+
+        return {
+          code: String(pCode),
+          name: pName ? String(pName) : '',
+          category: String(pCategory),
+          gstRate: pGst !== undefined ? Number(pGst) : 12,
+          sellingPrice: Number(pSelling) || 0,
+          purchaseCost: Number(pPurchase) || 0,
+          openingStock: Number(pOpening) || 0,
+          minimumStock: pMin !== undefined ? Number(pMin) : 20,
+          supplierName: pSupplier ? String(pSupplier) : '',
+          status: pStatus,
+          importStatus: status
+        };
+      });
+      
+      // Check duplicates within the file itself
+      const codes = new Set();
+      parsedData.forEach(p => {
+        if (p.importStatus === 'Ready') {
+          if (codes.has(p.code.toUpperCase())) {
+            p.importStatus = 'Duplicate Product Code';
+          } else {
+            codes.add(p.code.toUpperCase());
+          }
+        }
+      });
+
+      setImportPreviewData(parsedData);
+      setIsImportPreviewOpen(true);
+      setImportSuccessMsg('');
+    };
+    reader.readAsBinaryString(file);
+    // Reset file input
+    e.target.value = '';
+  };
+
+  const handleImport = () => {
+    const validProducts = importPreviewData.filter(p => p.importStatus === 'Ready');
+    validProducts.forEach(p => {
+      onAddProduct({
+        code: p.code,
+        name: p.name,
+        category: p.category,
+        sellingPrice: p.sellingPrice,
+        purchaseCost: p.purchaseCost,
+        gstRate: p.gstRate,
+        openingStock: p.openingStock,
+        minimumStock: p.minimumStock,
+        supplierName: p.supplierName,
+        status: p.status as 'Active' | 'Inactive'
+      });
+    });
+    setImportSuccessMsg('Products imported successfully');
+    setIsImportPreviewOpen(false);
+    setTimeout(() => setImportSuccessMsg(''), 3000);
+  };
+
+  const downloadTemplate = () => {
+    const headers = [
+      'Product Code', 'Product Name', 'Category', 'GST Rate', 'Selling Price', 
+      'Purchase Cost', 'Opening Stock', 'Minimum Stock', 'Supplier Name', 'Status'
+    ];
+    const ws = XLSX.utils.aoa_to_sheet([headers]);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Template");
+    XLSX.writeFile(wb, "Product_Import_Template.csv");
+  };
 
   // Categories extraction
   const categories = Array.from(new Set(products.map(p => p.category))).filter(Boolean);
@@ -184,6 +309,119 @@ export default function ProductsScreen({
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Form Column */}
         <div className="lg:col-span-1" id="product-form-card">
+          
+          {/* Import Section */}
+          <div className="bg-white border border-slate-200 rounded-xl shadow-xs p-5 mb-6">
+            <h2 className="font-display font-semibold text-slate-900 text-base mb-1 flex items-center">
+              Import Products from Excel
+            </h2>
+            <p className="text-xs text-slate-500 mb-4">
+              Upload previous stock sheet, product list, or inventory file and import products automatically.
+            </p>
+            
+            {importSuccessMsg && (
+              <div className="mb-4 p-3 bg-emerald-50 text-emerald-700 text-xs rounded-md border border-emerald-200 flex items-center gap-2">
+                <Check className="w-4 h-4" />
+                {importSuccessMsg}
+              </div>
+            )}
+
+            <div className="flex flex-wrap gap-2">
+              <label className="px-4 py-2 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 rounded-lg text-sm font-semibold transition-colors cursor-pointer border border-indigo-200">
+                Upload Excel / CSV
+                <input type="file" accept=".xlsx, .csv" className="hidden" onChange={handleFileUpload} />
+              </label>
+              <button
+                type="button"
+                onClick={() => importPreviewData.length > 0 && setIsImportPreviewOpen(!isImportPreviewOpen)}
+                disabled={importPreviewData.length === 0}
+                className="px-4 py-2 border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 rounded-lg text-sm font-semibold cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Preview Import
+              </button>
+              <button
+                type="button"
+                onClick={downloadTemplate}
+                className="px-4 py-2 border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 rounded-lg text-sm font-semibold cursor-pointer"
+              >
+                Download Template
+              </button>
+            </div>
+
+            {isImportPreviewOpen && importPreviewData.length > 0 && (
+              <div className="mt-6 border-t border-slate-100 pt-4">
+                <h3 className="text-sm font-semibold text-slate-900 mb-3 flex items-center justify-between">
+                  Preview Import
+                  <span className="text-xs font-normal text-slate-500">{importPreviewData.length} total</span>
+                </h3>
+                
+                <div className="flex flex-wrap gap-4 mb-4 text-xs font-medium bg-slate-50 p-3 rounded-lg border border-slate-100">
+                  <div className="text-slate-600">Total Rows: <span className="font-bold text-slate-900">{importPreviewData.length}</span></div>
+                  <div className="text-emerald-700">Ready to Import: <span className="font-bold">{importPreviewData.filter(p => p.importStatus === 'Ready').length}</span></div>
+                  <div className="text-rose-600">Invalid Rows: <span className="font-bold">{importPreviewData.filter(p => p.importStatus !== 'Ready' && p.importStatus !== 'Duplicate Product Code' && p.importStatus !== 'Already Exists').length}</span></div>
+                  <div className="text-amber-600">Duplicate Rows: <span className="font-bold">{importPreviewData.filter(p => p.importStatus === 'Duplicate Product Code' || p.importStatus === 'Already Exists').length}</span></div>
+                </div>
+
+                <div className="overflow-x-auto border border-slate-200 rounded-lg max-h-64 mb-4">
+                  <table className="w-full text-left border-collapse text-[10px] whitespace-nowrap">
+                    <thead className="bg-slate-50 sticky top-0 shadow-xs z-10">
+                      <tr>
+                        <th className="p-2 border-b border-slate-200 font-semibold text-slate-600">Product Code</th>
+                        <th className="p-2 border-b border-slate-200 font-semibold text-slate-600">Product Name</th>
+                        <th className="p-2 border-b border-slate-200 font-semibold text-slate-600">Category</th>
+                        <th className="p-2 border-b border-slate-200 font-semibold text-slate-600">GST Rate</th>
+                        <th className="p-2 border-b border-slate-200 font-semibold text-slate-600">Selling Price</th>
+                        <th className="p-2 border-b border-slate-200 font-semibold text-slate-600">Purchase Cost</th>
+                        <th className="p-2 border-b border-slate-200 font-semibold text-slate-600">Opening Stock</th>
+                        <th className="p-2 border-b border-slate-200 font-semibold text-slate-600">Min Stock</th>
+                        <th className="p-2 border-b border-slate-200 font-semibold text-slate-600">Supplier Name</th>
+                        <th className="p-2 border-b border-slate-200 font-semibold text-slate-600">Status</th>
+                        <th className="p-2 border-b border-slate-200 font-semibold text-slate-600">Import Status</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {importPreviewData.map((row, idx) => (
+                        <tr key={idx} className={row.importStatus === 'Ready' ? 'bg-white' : 'bg-red-50/50'}>
+                          <td className="p-2 font-mono text-slate-500">{row.code}</td>
+                          <td className="p-2 font-semibold text-slate-800">{row.name}</td>
+                          <td className="p-2 text-slate-600">{row.category}</td>
+                          <td className="p-2 text-slate-600">{row.gstRate}%</td>
+                          <td className="p-2 text-slate-600">{row.sellingPrice}</td>
+                          <td className="p-2 text-slate-600">{row.purchaseCost}</td>
+                          <td className="p-2 text-slate-600">{row.openingStock}</td>
+                          <td className="p-2 text-slate-600">{row.minimumStock}</td>
+                          <td className="p-2 text-slate-600">{row.supplierName}</td>
+                          <td className="p-2 text-slate-600">{row.status}</td>
+                          <td className="p-2">
+                            <span className={`px-1.5 py-0.5 rounded text-[9px] font-semibold ${row.importStatus === 'Ready' ? 'bg-emerald-100 text-emerald-800' : 'bg-red-100 text-red-800'}`}>
+                              {row.importStatus}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={handleImport}
+                    className="px-4 py-2 bg-emerald-600 text-white hover:bg-emerald-700 rounded-lg text-sm font-semibold transition-colors cursor-pointer flex-1"
+                  >
+                    Import Products
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsImportPreviewOpen(false)}
+                    className="px-4 py-2 border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 rounded-lg text-sm font-semibold cursor-pointer flex-1"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+
           <div className="bg-white border border-slate-200 rounded-xl shadow-xs p-5 sticky top-6">
             <h2 className="font-display font-semibold text-slate-900 text-base mb-4 flex items-center">
               <PlusCircle className="w-5 h-5 mr-2 text-indigo-600" />
