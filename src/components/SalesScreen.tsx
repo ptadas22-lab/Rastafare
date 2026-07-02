@@ -6,7 +6,8 @@
 import React, { useState, useEffect } from 'react';
 import { Product, SalesEntry } from '../types';
 import { formatINR } from '../utils/format';
-import { PlusCircle, Search, Edit, Trash2, Receipt, Sparkles } from 'lucide-react';
+import { PlusCircle, Search, Edit, Trash2, Receipt, Sparkles, Check } from 'lucide-react';
+import * as XLSX from 'xlsx';
 
 interface SalesScreenProps {
   sales: SalesEntry[];
@@ -57,8 +58,14 @@ export default function SalesScreen({
   const [formRate, setFormRate] = useState(0);
   const [formDiscount, setFormDiscount] = useState(0);
   const [formShippingCharge, setFormShippingCharge] = useState(0);
-  const [formPaymentStatus, setFormPaymentStatus] = useState<'Paid' | 'Pending' | 'Refunded'>('Paid');
+  const [formPaymentStatus, setFormPaymentStatus] = useState<'Paid' | 'Pending' | 'Partial' | 'Refunded'>('Paid');
+  const [formPaymentReminderStatus, setFormPaymentReminderStatus] = useState<'Not Sent' | 'Reminder Sent' | 'Follow Up Required'>('Not Sent');
   const [formError, setFormError] = useState('');
+
+  // Import states
+  const [importPreviewData, setImportPreviewData] = useState<any[]>([]);
+  const [isImportPreviewOpen, setIsImportPreviewOpen] = useState(false);
+  const [importSuccessMsg, setImportSuccessMsg] = useState('');
 
   // Auto-calculated states for live-feedback
   const [liveSalesAmount, setLiveSalesAmount] = useState(0);
@@ -101,6 +108,177 @@ export default function SalesScreen({
     setLiveGstAmount(gstAmount);
     setLiveTotalSales(totalSales);
   }, [formProductCode, formQuantity, formRate, formDiscount, formShippingCharge, liveGstPercent, products]);
+
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      const bstr = evt.target?.result;
+      const wb = XLSX.read(bstr, { type: 'binary' });
+      const wsname = wb.SheetNames[0];
+      const ws = wb.Sheets[wsname];
+      const data = XLSX.utils.sheet_to_json(ws);
+      
+      const parsedData = data.map((row: any, index: number) => {
+        const getVal = (keys: string[]) => {
+          for (const key of keys) {
+            if (row[key] !== undefined) return row[key];
+          }
+          return undefined;
+        };
+
+        const rDate = getVal(['Sale Date', 'Date', 'Invoice Date', 'Bill Date']);
+        let rOrderId = getVal(['Order ID', 'Invoice No', 'Bill No', 'Receipt No', 'Order Number']);
+        const rCustName = getVal(['Customer Name', 'Buyer Name', 'Client Name', 'Customer']);
+        const rMobile = getVal(['Mobile No', 'Phone', 'Mobile', 'Contact No']);
+        const rState = getVal(['Customer State', 'State', 'Place of Supply']);
+        const rGSTIN = getVal(['Customer GSTIN', 'GSTIN', 'Buyer GSTIN']);
+        const rAddress = getVal(['Billing Address', 'Address', 'Buyer Address']);
+        let rPCode = getVal(['Product Code', 'SKU', 'Item Code', 'Product ID']);
+        const rPName = getVal(['Product Name', 'Item Name', 'Product', 'Product Title']);
+        const rQty = getVal(['Quantity', 'Qty', 'Units']);
+        const rRate = getVal(['Rate', 'Sale Price', 'Selling Price', 'MRP', 'Unit Price']);
+        const rDiscount = getVal(['Discount Amount', 'Discount', 'Disc']);
+        const rShipping = getVal(['Shipping Charges', 'Shipping', 'Delivery Charges', 'Freight']);
+        const rGstRate = getVal(['GST Rate', 'GST %', 'Tax %', 'Tax']);
+        let rStatus = getVal(['Payment Status', 'Status', 'Payment']);
+        let rReminder = getVal(['Payment Reminder Status', 'Reminder Status', 'Reminder']);
+
+        let statusMsg = 'Ready';
+
+        if (!rPCode && rPName) {
+           const matchedProd = products.find(p => p.name.toLowerCase() === String(rPName).toLowerCase());
+           if (matchedProd) rPCode = matchedProd.code;
+        }
+
+        if (!rDate) statusMsg = 'Missing Sale Date';
+        else if (!rCustName) statusMsg = 'Missing Customer Name';
+        else if (!rPName) statusMsg = 'Missing Product Name';
+        else if (rQty === undefined || isNaN(Number(rQty)) || Number(rQty) <= 0) statusMsg = 'Invalid Quantity';
+        else if (rRate === undefined || isNaN(Number(rRate)) || Number(rRate) < 0) statusMsg = 'Invalid Rate';
+        else if (rGstRate !== undefined && isNaN(Number(rGstRate))) statusMsg = 'Invalid GST Rate';
+
+        if (!rOrderId) {
+          rOrderId = `ORD-2026-${String(sales.length + index + 1).padStart(4, '0')}`;
+        }
+        
+        if (sales.some(s => s.orderId.toUpperCase() === String(rOrderId).toUpperCase() && (s.productCode === rPCode || s.productCode === rPName))) {
+          statusMsg = 'Already Exists';
+        }
+
+        if (!rStatus) rStatus = 'Pending';
+        if (!rReminder) rReminder = 'Not Sent';
+
+        const q = Number(rQty) || 1;
+        const rate = Number(rRate) || 0;
+        const discount = Number(rDiscount) || 0;
+        const shipping = Number(rShipping) || 0;
+        const gst = Number(rGstRate) || 0;
+        
+        const salesAmt = q * rate;
+        const taxable = salesAmt - discount + shipping;
+        const gstAmount = taxable * (gst / 100);
+        const totalSales = taxable + gstAmount;
+
+        return {
+          date: rDate,
+          orderId: String(rOrderId),
+          customerName: String(rCustName),
+          customerPhone: rMobile ? String(rMobile) : '',
+          customerState: rState ? String(rState) : businessState || 'Maharashtra',
+          customerGSTIN: rGSTIN ? String(rGSTIN) : '',
+          billingAddress: rAddress ? String(rAddress) : '',
+          productCode: rPCode ? String(rPCode) : String(rPName),
+          productName: String(rPName),
+          quantity: q,
+          rate: rate,
+          discount: discount,
+          shippingCharge: shipping,
+          gstRate: gst,
+          taxableValue: taxable,
+          gstAmount: gstAmount,
+          totalSales: totalSales,
+          paymentStatus: rStatus,
+          paymentReminderStatus: rReminder,
+          importStatus: statusMsg
+        };
+      });
+
+      const seen = new Set();
+      parsedData.forEach(p => {
+        if (p.importStatus === 'Ready') {
+          const key = `${p.orderId}-${p.productCode}`.toUpperCase();
+          if (seen.has(key)) {
+            p.importStatus = 'Duplicate Sale';
+          } else {
+            seen.add(key);
+          }
+        }
+      });
+
+      setImportPreviewData(parsedData);
+      setIsImportPreviewOpen(true);
+      setImportSuccessMsg('');
+    };
+    reader.readAsBinaryString(file);
+    e.target.value = '';
+  };
+
+  const handleInvoiceUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    
+    if (file.type.includes('pdf') || file.type.includes('image')) {
+      alert("Invoice extraction from PDF/image will be connected later. Please upload Excel or CSV for automatic import.");
+    } else {
+      handleFileUpload(e);
+    }
+    e.target.value = '';
+  };
+
+  const handleImportSales = () => {
+    const validSales = importPreviewData.filter(s => s.importStatus === 'Ready');
+    validSales.forEach((s, idx) => {
+      onAddSale({
+        id: 'S-IMP-' + Date.now() + idx,
+        date: s.date,
+        orderId: s.orderId,
+        customerName: s.customerName,
+        customerPhone: s.customerPhone,
+        customerGSTIN: s.customerGSTIN || undefined,
+        customerState: s.customerState,
+        billingAddress: s.billingAddress,
+        productCode: s.productCode,
+        quantity: s.quantity,
+        rate: s.rate,
+        discount: s.discount,
+        shippingCharge: s.shippingCharge,
+        gstRate: s.gstRate,
+        gstAmount: Number(s.gstAmount.toFixed(2)),
+        totalSales: Number(s.totalSales.toFixed(2)),
+        paymentStatus: s.paymentStatus as any,
+        paymentReminderStatus: s.paymentReminderStatus as any
+      });
+    });
+    setImportSuccessMsg('Sales imported successfully');
+    setIsImportPreviewOpen(false);
+    setTimeout(() => setImportSuccessMsg(''), 3000);
+  };
+
+  const downloadSalesTemplate = () => {
+    const headers = [
+      'Sale Date', 'Order ID', 'Customer Name', 'Mobile No', 'Customer State', 
+      'Customer GSTIN', 'Billing Address', 'Product Code', 'Product Name', 'Quantity', 
+      'Rate', 'Discount Amount', 'Shipping Charges', 'GST Rate', 'Payment Status',
+      'Payment Reminder Status'
+    ];
+    const ws = XLSX.utils.aoa_to_sheet([headers]);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Sales_Template");
+    XLSX.writeFile(wb, "Sales_Import_Template.csv");
+  };
 
   // Handle Edit Trigger
   const handleEdit = (sale: SalesEntry) => {
@@ -148,11 +326,12 @@ export default function SalesScreen({
     e.preventDefault();
     setFormError('');
 
-    // Validations
-    if (!formOrderId.trim()) {
-      setFormError('Order ID is required.');
-      return;
+    let finalOrderId = formOrderId.trim();
+    if (!finalOrderId) {
+      finalOrderId = `ORD-2026-${String(sales.length + 1).padStart(4, '0')}`;
     }
+
+    // Validations
     if (!formCustomerName.trim()) {
       setFormError('Customer Name is required.');
       return;
@@ -171,8 +350,8 @@ export default function SalesScreen({
     }
 
     // Check Order ID duplicates for new entries
-    if (!isEditing && sales.some(s => s.orderId.toUpperCase() === formOrderId.toUpperCase())) {
-      setFormError(`An entry for Order ID '${formOrderId}' already exists.`);
+    if (!isEditing && sales.some(s => s.orderId.toUpperCase() === finalOrderId.toUpperCase())) {
+      setFormError(`An entry for Order ID '${finalOrderId}' already exists.`);
       return;
     }
 
@@ -184,7 +363,7 @@ export default function SalesScreen({
     const payload: SalesEntry = {
       id: isEditing ? editingId : 'S-' + Date.now(),
       date: formDate,
-      orderId: formOrderId.trim().toUpperCase(),
+      orderId: finalOrderId.toUpperCase(),
       customerName: formCustomerName.trim(),
       customerPhone: formCustomerPhone.trim(),
       customerGSTIN: formCustomerGSTIN.trim() || undefined,
@@ -198,17 +377,21 @@ export default function SalesScreen({
       gstRate: liveGstPercent,
       gstAmount: Number(calculatedGst.toFixed(2)),
       totalSales: Number(total.toFixed(2)),
-      paymentStatus: formPaymentStatus,
-      // Keep or assign invoiceNo
+      paymentStatus: formPaymentStatus as any,
+      paymentReminderStatus: formPaymentReminderStatus as any,
       invoiceNo: isEditing 
         ? sales.find(s => s.id === editingId)?.invoiceNo 
-        : undefined // will be auto-assigned dynamically by index or generator if needed
+        : undefined
     };
 
     if (isEditing) {
       onUpdateSale(payload);
     } else {
       onAddSale(payload);
+    }
+
+    if (generateInvoice) {
+      onViewInvoice(payload);
     }
 
     resetForm();
@@ -241,6 +424,132 @@ export default function SalesScreen({
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Form panel */}
         <div className="lg:col-span-1" id="sales-form-card">
+          
+          {/* Import Section */}
+          <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-5 mb-6">
+            <h2 className="font-display font-semibold text-slate-900 text-base mb-1 flex items-center">
+              Import Sales from Excel / Invoice File
+            </h2>
+            <p className="text-xs text-slate-500 mb-4">
+              Upload previous sales register, invoice sheet, or invoice file and extract sales automatically.
+            </p>
+            
+            {importSuccessMsg && (
+              <div className="mb-4 p-3 bg-emerald-50 text-emerald-700 text-xs rounded-md border border-emerald-200 flex items-center gap-2">
+                <Check className="w-4 h-4" />
+                {importSuccessMsg}
+              </div>
+            )}
+
+            <div className="flex flex-col gap-2">
+              <label className="px-4 py-2 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 rounded-lg text-sm font-semibold transition-colors cursor-pointer border border-indigo-200 text-center">
+                Upload Sales Excel / CSV
+                <input type="file" accept=".xlsx, .csv" className="hidden" onChange={handleFileUpload} />
+              </label>
+              <label className="px-4 py-2 border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 rounded-lg text-sm font-semibold cursor-pointer text-center">
+                Upload Invoice File
+                <input type="file" accept=".pdf, image/*, .xlsx, .csv" className="hidden" onChange={handleInvoiceUpload} />
+              </label>
+              
+              <div className="flex gap-2 mt-2">
+                <button
+                  type="button"
+                  onClick={() => importPreviewData.length > 0 && setIsImportPreviewOpen(!isImportPreviewOpen)}
+                  disabled={importPreviewData.length === 0}
+                  className="flex-1 px-4 py-2 border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 rounded-lg text-sm font-semibold cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Preview Import
+                </button>
+                <button
+                  type="button"
+                  onClick={downloadSalesTemplate}
+                  className="flex-1 px-4 py-2 border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 rounded-lg text-sm font-semibold cursor-pointer"
+                >
+                  Download Template
+                </button>
+              </div>
+            </div>
+
+            {isImportPreviewOpen && importPreviewData.length > 0 && (
+              <div className="mt-6 border-t border-slate-100 pt-4">
+                <h3 className="text-sm font-semibold text-slate-900 mb-3 flex items-center justify-between">
+                  Preview Import
+                  <span className="text-xs font-normal text-slate-500">{importPreviewData.length} total</span>
+                </h3>
+                
+                <div className="flex flex-wrap gap-4 mb-4 text-xs font-medium bg-slate-50 p-3 rounded-lg border border-slate-100">
+                  <div className="text-slate-600">Total: <span className="font-bold text-slate-900">{importPreviewData.length}</span></div>
+                  <div className="text-emerald-700">Ready: <span className="font-bold">{importPreviewData.filter(p => p.importStatus === 'Ready').length}</span></div>
+                  <div className="text-rose-600">Invalid: <span className="font-bold">{importPreviewData.filter(p => p.importStatus !== 'Ready' && p.importStatus !== 'Duplicate Sale' && p.importStatus !== 'Already Exists').length}</span></div>
+                  <div className="text-amber-600">Duplicate: <span className="font-bold">{importPreviewData.filter(p => p.importStatus === 'Duplicate Sale' || p.importStatus === 'Already Exists').length}</span></div>
+                </div>
+
+                <div className="overflow-x-auto border border-slate-200 rounded-lg max-h-64 mb-4">
+                  <table className="w-full text-left border-collapse text-[10px] whitespace-nowrap">
+                    <thead className="bg-slate-50 sticky top-0 shadow-xs z-10">
+                      <tr>
+                        <th className="p-2 border-b border-slate-200 font-semibold text-slate-600">Sale Date</th>
+                        <th className="p-2 border-b border-slate-200 font-semibold text-slate-600">Order ID</th>
+                        <th className="p-2 border-b border-slate-200 font-semibold text-slate-600">Customer Name</th>
+                        <th className="p-2 border-b border-slate-200 font-semibold text-slate-600">Product Name</th>
+                        <th className="p-2 border-b border-slate-200 font-semibold text-slate-600">Quantity</th>
+                        <th className="p-2 border-b border-slate-200 font-semibold text-slate-600">Rate</th>
+                        <th className="p-2 border-b border-slate-200 font-semibold text-slate-600">Discount</th>
+                        <th className="p-2 border-b border-slate-200 font-semibold text-slate-600">Shipping</th>
+                        <th className="p-2 border-b border-slate-200 font-semibold text-slate-600">GST Rate</th>
+                        <th className="p-2 border-b border-slate-200 font-semibold text-slate-600">Taxable</th>
+                        <th className="p-2 border-b border-slate-200 font-semibold text-slate-600">GST Amt</th>
+                        <th className="p-2 border-b border-slate-200 font-semibold text-slate-600">Total Sales</th>
+                        <th className="p-2 border-b border-slate-200 font-semibold text-slate-600">Status</th>
+                        <th className="p-2 border-b border-slate-200 font-semibold text-slate-600">Import Status</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {importPreviewData.map((row, idx) => (
+                        <tr key={idx} className={row.importStatus === 'Ready' ? 'bg-white' : 'bg-red-50/50'}>
+                          <td className="p-2 text-slate-600">{row.date}</td>
+                          <td className="p-2 font-mono text-slate-500">{row.orderId}</td>
+                          <td className="p-2 font-semibold text-slate-800">{row.customerName}</td>
+                          <td className="p-2 text-slate-600">{row.productName || row.productCode}</td>
+                          <td className="p-2 text-slate-600">{row.quantity}</td>
+                          <td className="p-2 text-slate-600">{row.rate}</td>
+                          <td className="p-2 text-slate-600">{row.discount}</td>
+                          <td className="p-2 text-slate-600">{row.shippingCharge}</td>
+                          <td className="p-2 text-slate-600">{row.gstRate}%</td>
+                          <td className="p-2 text-slate-600">{row.taxableValue}</td>
+                          <td className="p-2 text-slate-600">{row.gstAmount}</td>
+                          <td className="p-2 text-slate-600 font-bold">{row.totalSales}</td>
+                          <td className="p-2 text-slate-600">{row.paymentStatus}</td>
+                          <td className="p-2">
+                            <span className={`px-1.5 py-0.5 rounded text-[9px] font-semibold ${row.importStatus === 'Ready' ? 'bg-emerald-100 text-emerald-800' : 'bg-red-100 text-red-800'}`}>
+                              {row.importStatus}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={handleImportSales}
+                    className="px-4 py-2 bg-emerald-600 text-white hover:bg-emerald-700 rounded-lg text-sm font-semibold transition-colors cursor-pointer flex-1"
+                  >
+                    Import Sales
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsImportPreviewOpen(false)}
+                    className="px-4 py-2 border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 rounded-lg text-sm font-semibold cursor-pointer flex-1"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+
           <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-5 sticky top-6">
             <h2 className="font-display font-semibold text-slate-900 text-base mb-4 flex items-center">
               <PlusCircle className="w-5 h-5 mr-2 text-indigo-600" />
@@ -261,14 +570,13 @@ export default function SalesScreen({
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-slate-500 mb-1">Order ID *</label>
+                  <label className="block text-xs font-semibold text-slate-500 mb-1">Order ID (Auto-gen if blank)</label>
                   <input
                     type="text"
                     placeholder="ORD-2026-1234"
                     value={formOrderId}
                     onChange={e => setFormOrderId(e.target.value)}
                     className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs bg-white focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 font-mono uppercase"
-                    required
                   />
                 </div>
               </div>
@@ -439,17 +747,33 @@ export default function SalesScreen({
                 </div>
               </div>
 
-              <div>
-                <label className="block text-xs font-semibold text-slate-500 mb-1">Payment Status</label>
-                <select
-                  value={formPaymentStatus}
-                  onChange={e => setFormPaymentStatus(e.target.value as any)}
-                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs bg-white focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
-                >
-                  <option value="Paid">Paid</option>
-                  <option value="Pending">Pending / Unpaid</option>
-                  <option value="Refunded">Refunded</option>
-                </select>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-500 mb-1">Payment Status</label>
+                  <select
+                    value={formPaymentStatus}
+                    onChange={e => setFormPaymentStatus(e.target.value as any)}
+                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs bg-white focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                  >
+                    <option value="Paid">Paid</option>
+                    <option value="Pending">Pending / Unpaid</option>
+                    <option value="Partial">Partial</option>
+                    <option value="Refunded">Refunded</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-500 mb-1">Payment Reminder</label>
+                  <select
+                    value={formPaymentReminderStatus}
+                    onChange={e => setFormPaymentReminderStatus(e.target.value as any)}
+                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs bg-white focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                  >
+                    <option value="Not Sent">Not Sent</option>
+                    <option value="Reminder Sent">Reminder Sent</option>
+                    <option value="Follow Up Required">Follow Up Required</option>
+                  </select>
+                </div>
               </div>
 
               {formError && (
@@ -458,18 +782,28 @@ export default function SalesScreen({
                 </div>
               )}
 
-              <div className="flex gap-2">
-                <button
-                  type="submit"
-                  className="flex-1 py-2 bg-indigo-600 text-white hover:bg-indigo-700 text-xs font-bold rounded-lg transition-colors cursor-pointer"
-                >
-                  {isEditing ? 'Save Changes' : 'Record Transaction'}
-                </button>
+              <div className="flex flex-col gap-2">
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={(e) => handleSubmit(e, true)}
+                    className="flex-1 py-2 bg-indigo-600 text-white hover:bg-indigo-700 text-xs font-bold rounded-lg transition-colors cursor-pointer"
+                  >
+                    Save & Gen Invoice
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(e) => handleSubmit(e, false)}
+                    className="flex-1 py-2 bg-emerald-600 text-white hover:bg-emerald-700 text-xs font-bold rounded-lg transition-colors cursor-pointer"
+                  >
+                    {isEditing ? 'Save Changes' : 'Record Transaction'}
+                  </button>
+                </div>
                 {isEditing && (
                   <button
                     type="button"
                     onClick={resetForm}
-                    className="px-3 py-2 border border-slate-200 bg-white hover:bg-slate-50 text-slate-500 text-xs font-semibold rounded-lg cursor-pointer"
+                    className="w-full px-3 py-2 border border-slate-200 bg-white hover:bg-slate-50 text-slate-500 text-xs font-semibold rounded-lg cursor-pointer"
                   >
                     Cancel
                   </button>

@@ -33,7 +33,8 @@ export interface SalesEntry {
   gstRate: number; // percentage (e.g. 12, 18, 5)
   gstAmount: number; // calculated
   totalSales: number; // calculated
-  paymentStatus: 'Paid' | 'Pending' | 'Refunded';
+  paymentStatus: 'Paid' | 'Pending' | 'Partial' | 'Refunded';
+  paymentReminderStatus?: 'Not Sent' | 'Reminder Sent' | 'Follow Up Required';
   invoiceNo?: string; // e.g., INV-2026-0001
 }
 

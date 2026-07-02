@@ -144,7 +144,7 @@ export default function DashboardScreen({ products, sales, payments, expenses, e
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center bg-white border border-slate-200 p-6 rounded-xl shadow-xs">
         <div>
           <h1 className="text-2xl font-display font-semibold tracking-tight text-slate-900" id="welcome-title">
-            Finance Control Workspace
+            Rastafare Workspace
           </h1>
           <p className="text-sm text-slate-500 mt-1">
             Real-time business health, compliance check, and automated invoice routing.

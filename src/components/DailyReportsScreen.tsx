@@ -202,7 +202,7 @@ export default function DailyReportsScreen({
             </div>
             
             <div className="mt-2 md:mt-0 px-3 py-1 bg-indigo-50/50 border border-indigo-100 rounded text-[11px] font-bold text-indigo-700 uppercase">
-              Finance Control Internal Audit
+              Rastafare Internal Audit
             </div>
           </div>
 
@@ -357,8 +357,10 @@ export default function DailyReportsScreen({
           {/* Daily sign-off block */}
           <div className="border-t border-neutral-200 pt-6 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 text-xs">
             <div className="text-neutral-500 leading-normal flex items-center gap-1.5">
-              <UserCheck className="w-4 h-4 text-emerald-600" />
-              <span>Prepared automatically by Finance Control. Approved for internal routing.</span>
+              <p className="text-slate-400 flex items-center justify-center gap-1">
+                <UserCheck className="w-4 h-4 text-emerald-600" />
+                <span>Prepared automatically by Rastafare. Approved for internal routing.</span>
+              </p>
             </div>
             
             <div className="w-44 text-right">

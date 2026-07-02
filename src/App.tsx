@@ -380,9 +380,9 @@ export default function App() {
       <header className="md:hidden bg-white border-b border-slate-200 p-4 flex justify-between items-center no-print sticky top-0 z-30 shadow-xs">
         <div className="flex items-center gap-2">
           <div className="w-8 h-8 bg-indigo-600 rounded flex items-center justify-center text-white text-xs font-bold font-display">
-            FC
+            R
           </div>
-          <span className="font-display font-bold text-sm text-slate-900">Finance Control</span>
+          <span className="font-display font-bold text-sm text-slate-900">Rastafare</span>
         </div>
         
         <button 
@@ -404,10 +404,10 @@ export default function App() {
           {/* Brand header */}
           <div className="flex items-center gap-3 px-2">
             <div className="w-9 h-9 bg-indigo-600 rounded flex items-center justify-center text-white text-sm font-bold font-display shadow-xs">
-              FC
+              R
             </div>
             <div>
-              <h1 className="font-display font-semibold text-slate-900 text-sm tracking-tight">Finance Control</h1>
+              <h1 className="font-display font-semibold text-slate-900 text-sm tracking-tight">Rastafare</h1>
               <p className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider">Internal ERP Ledger</p>
             </div>
           </div>
