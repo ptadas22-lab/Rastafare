@@ -50,7 +50,9 @@ export interface PaymentRecord {
   bankReceivedDate: string;
   saleAmount: number; // from matching SalesEntry
   difference: number; // Gross Amount - Sale Amount
-  matchStatus: 'Matched' | 'Unmatched' | 'Missing Order';
+  matchStatus: 'Matched' | 'Unmatched' | 'Missing Order' | 'Partial' | 'Excess';
+  transactionId?: string;
+  remarks?: string;
 }
 
 export interface ExpenseRecord {
